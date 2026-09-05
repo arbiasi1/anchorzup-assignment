@@ -62,6 +62,14 @@ export default function ContentFilter() {
     const interval = window.setInterval(checkApi, 30_000);
     return () => { active = false; window.clearInterval(interval); };
   }, []);
+  useEffect(() => {
+    if (!open) return;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setOpen(false);
+    };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [open]);
 
   function newRule() { setEditingId(null); setForm(emptyForm); setOpen(true); }
   function editRule(rule: Rule) {
@@ -81,12 +89,24 @@ export default function ContentFilter() {
   }
 
   async function toggle(rule: Rule) {
-    await request(`/rules/${rule.id}`, { method: "PUT", body: JSON.stringify({ enabled: !rule.enabled }) });
-    await loadRules();
+    setMessage("");
+    try {
+      await request(`/rules/${rule.id}`, { method: "PUT", body: JSON.stringify({ enabled: !rule.enabled }) });
+      await loadRules();
+    } catch (error) {
+      setMessage((error as Error).message);
+    }
   }
   async function remove(rule: Rule) {
     if (!window.confirm(`Delete “${rule.keyword}”?`)) return;
-    await request(`/rules/${rule.id}`, { method: "DELETE" }); await loadRules();
+    setMessage("");
+    try {
+      await request(`/rules/${rule.id}`, { method: "DELETE" });
+      await loadRules();
+      setResult(null);
+    } catch (error) {
+      setMessage((error as Error).message);
+    }
   }
   async function processText(event: FormEvent) {
     event.preventDefault(); if (!text.trim()) return;
@@ -103,16 +123,16 @@ export default function ContentFilter() {
       </header>
       <main className="container">
         <div className="page-title"><div><h1>Rule-based content filter</h1><p>Create rules and use them to mark important parts of your text.</p></div></div>
-        {message && <div className="alert"><CircleHelp size={16} />{message}<button onClick={() => setMessage("")}><X size={14} /></button></div>}
+        {message && <div className="alert" role="alert" aria-live="polite"><CircleHelp size={16} />{message}<button type="button" aria-label="Dismiss message" onClick={() => setMessage("")}><X size={14} /></button></div>}
 
         <div className="grid">
           <section className="card rules-card">
-            <div className="card-header"><div><h2>Rules</h2><p>{rules.filter(rule => rule.enabled).length} active of {rules.length}</p></div><button className="button" onClick={newRule}><Plus size={15} /> Add rule</button></div>
+            <div className="card-header"><div><h2>Rules</h2><p>{rules.filter(rule => rule.enabled).length} active of {rules.length}</p></div><button type="button" className="button" onClick={newRule}><Plus size={15} /> Add rule</button></div>
             <div className="rule-list">
               {!rules.length && <div className="empty"><p>No rules yet</p><span>Add a rule to start filtering text.</span></div>}
               {rules.map(rule => <div className={`rule ${rule.enabled ? "" : "muted"}`} key={rule.id}>
                 <div className="rule-main"><span className="swatch" style={{ background: rule.color || "#18181b" }} /><div><strong>{rule.keyword}</strong><small>{rule.match_type === "startsWith" ? "starts with" : rule.match_type} · {rule.action_type}</small></div></div>
-                <div className="row-actions"><button title={rule.enabled ? "Disable" : "Enable"} onClick={() => void toggle(rule)} className={rule.enabled ? "enabled" : ""}><Power size={15} /></button><button title="Edit" onClick={() => editRule(rule)}><Edit2 size={15} /></button><button title="Delete" onClick={() => void remove(rule)}><Trash2 size={15} /></button></div>
+                <div className="row-actions"><button type="button" aria-label={`${rule.enabled ? "Disable" : "Enable"} ${rule.keyword}`} title={rule.enabled ? "Disable" : "Enable"} onClick={() => void toggle(rule)} className={rule.enabled ? "enabled" : ""}><Power size={15} /></button><button type="button" aria-label={`Edit ${rule.keyword}`} title="Edit" onClick={() => editRule(rule)}><Edit2 size={15} /></button><button type="button" aria-label={`Delete ${rule.keyword}`} title="Delete" onClick={() => void remove(rule)}><Trash2 size={15} /></button></div>
               </div>)}
             </div>
           </section>
@@ -124,7 +144,7 @@ export default function ContentFilter() {
             </section>
             <section className="card">
               <div className="card-header"><div><h2>Result</h2><p>{result ? `${result.match_count} matches from ${result.matched_rule_count} rules` : "Processed text appears here."}</p></div></div>
-              <div className={`result ${result ? "" : "result-empty"}`}>
+              <div className={`result ${result ? "" : "result-empty"}`} aria-live="polite">
                 {!result ? "No result yet." : result.segments.map((segment, index) => <Segment key={index} text={segment.text} matches={segment.matches} />)}
               </div>
             </section>
@@ -134,7 +154,7 @@ export default function ContentFilter() {
 
       {open && <div className="dialog-backdrop" onMouseDown={event => { if (event.currentTarget === event.target) setOpen(false); }}>
         <div className="dialog" role="dialog" aria-modal="true" aria-labelledby="dialog-title">
-          <div className="dialog-header"><div><h2 id="dialog-title">{editingId ? "Edit rule" : "Add rule"}</h2><p>Choose what to match and how it should appear.</p></div><button className="icon-button" onClick={() => setOpen(false)}><X size={17} /></button></div>
+          <div className="dialog-header"><div><h2 id="dialog-title">{editingId ? "Edit rule" : "Add rule"}</h2><p>Choose what to match and how it should appear.</p></div><button type="button" className="icon-button" aria-label="Close dialog" onClick={() => setOpen(false)}><X size={17} /></button></div>
           <form onSubmit={saveRule}>
             <Field label="Keyword or phrase"><input required maxLength={255} value={form.keyword} onChange={event => update("keyword", event.target.value)} placeholder="e.g. urgent" autoFocus /></Field>
             <div className="two-columns"><Field label="Match type"><select value={form.match_type} onChange={event => update("match_type", event.target.value as MatchType)}><option value="contains">Contains</option><option value="startsWith">Starts with</option><option value="exact">Exact match</option></select></Field><Field label="Action"><select value={form.action_type} onChange={event => update("action_type", event.target.value as ActionType)}><option value="highlight">Highlight</option><option value="tooltip">Tooltip</option></select></Field></div>
@@ -153,5 +173,10 @@ function Segment({ text, matches }: { text: string; matches: Match[] }) {
   if (!matches.length) return text;
   const highlights = matches.filter(match => match.action_type === "highlight");
   const labels = matches.filter(match => match.action_type === "tooltip").map(match => match.label).filter(Boolean);
-  return <mark className={labels.length ? "has-tooltip" : ""} style={{ background: highlights[0]?.color || "transparent", borderBottomColor: labels.length ? "#18181b" : "transparent" }} tabIndex={0}>{text}{labels.length > 0 && <span className="tooltip">{labels.join(" · ")}</span>}</mark>;
+  const colors = highlights.map(match => match.color).filter((color): color is string => Boolean(color));
+  const background = colors.length < 2
+    ? colors[0] || "transparent"
+    : `linear-gradient(to bottom, ${colors.map((color, index) => `${color} ${index * 100 / colors.length}% ${(index + 1) * 100 / colors.length}%`).join(", ")})`;
+  const description = [...highlights.map(match => `highlighted by ${match.keyword}`), ...labels.map(label => `tooltip ${label}`)].join(", ");
+  return <mark className={labels.length ? "has-tooltip" : ""} style={{ background, borderBottomColor: labels.length ? "#18181b" : "transparent" }} tabIndex={labels.length ? 0 : undefined} aria-label={`${text}: ${description}`}>{text}{labels.length > 0 && <span className="tooltip" role="tooltip">{labels.join(" · ")}</span>}</mark>;
 }
