@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, Response, status
-from sqlalchemy import select
+from sqlalchemy import select, text
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from .database import get_db
@@ -18,8 +19,13 @@ def find_rule(rule_id: int, db: Session) -> Rule:
 
 
 @router.get("/health")
-def health() -> dict[str, str]:
-    return {"status": "ok"}
+def health(response: Response, db: Session = Depends(get_db)) -> dict[str, str]:
+    try:
+        db.execute(text("SELECT 1"))
+    except SQLAlchemyError:
+        response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+        return {"status": "degraded", "database": "unavailable"}
+    return {"status": "ok", "database": "ok"}
 
 
 @router.get("/rules", response_model=list[RuleOut])
@@ -68,4 +74,3 @@ def delete_rule(rule_id: int, db: Session = Depends(get_db)):
 def process(payload: ProcessRequest, db: Session = Depends(get_db)):
     rules = db.scalars(select(Rule).where(Rule.enabled.is_(True))).all()
     return process_text(payload.text, rules)
-
